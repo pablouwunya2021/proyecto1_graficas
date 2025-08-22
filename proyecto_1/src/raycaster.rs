@@ -1,4 +1,3 @@
-use crate::config::BLOCK_SIZE;
 use crate::framebuffer::Framebuffer;
 use crate::player::Player;
 
@@ -7,104 +6,79 @@ pub struct Intersect {
     pub impact: char,
 }
 
-pub fn render3d(framebuffer: &mut Framebuffer, player: &Player, maze: &Vec<Vec<char>>) {
-    let num_rays = framebuffer.width;
-    let hh = framebuffer.height as f32 / 2.0;
-
-    framebuffer.clear();
-
-    // Cielo y piso (gris oscuro) opcionales simples
-    // cielo
-    for y in 0..(framebuffer.height / 2) {
-        for x in 0..framebuffer.width {
-            framebuffer.put(x, y, 0x303050);
-        }
-    }
-    // piso
-    for y in (framebuffer.height / 2)..framebuffer.height {
-        for x in 0..framebuffer.width {
-            framebuffer.put(x, y, 0x202020);
-        }
-    }
-
-    // Ray casting
-    for i in 0..num_rays {
-        let t = i as f32 / num_rays as f32;
-        let a = player.a - (player.fov / 2.0) + (player.fov * t);
-
-        let inter = cast_ray(maze, player, a, BLOCK_SIZE);
-
-        // corrección “fish-eye”
-        let distance = inter.distance * (player.a - a).cos();
-        if distance <= 0.0 {
-            continue;
-        }
-
-        // Altura del “stake”
-        let stake_height = (BLOCK_SIZE as f32 * hh) / distance;
-
-        let stake_top = (hh - (stake_height / 2.0)).max(0.0) as usize;
-        let stake_bottom =
-            (hh + (stake_height / 2.0)).min(framebuffer.height as f32 - 1.0) as usize;
-
-        // color base según tipo de pared (por ahora 2 colores simples para distinguir)
-        let color = match inter.impact {
-            '#' => 0xE0E0E0, // pared sólida
-            _ => 0xA0A0A0,   // otros
-        };
-
-        for y in stake_top..stake_bottom {
-            framebuffer.put(i, y, color);
-        }
-    }
-}
-
 pub fn cast_ray(
     maze: &Vec<Vec<char>>,
     player: &Player,
     a: f32,
     block_size: usize,
 ) -> Intersect {
-    let mut d = 0.0_f32;
-    let step = 1.0_f32;
+    let mut d = 0.0;
 
     loop {
-        let x = player.pos.x + a.cos() * d;
-        let y = player.pos.y + a.sin() * d;
+        let cos = d * a.cos();
+        let sin = d * a.sin();
+        let x = (player.pos.x + cos) as usize;
+        let y = (player.pos.y + sin) as usize;
 
-        if x < 0.0 || y < 0.0 {
+        let i = x / block_size;
+        let j = y / block_size;
+
+        if maze[j][i] != ' ' {
             return Intersect {
                 distance: d,
-                impact: '#',
+                impact: maze[j][i],
             };
         }
 
-        let i = (x as usize) / block_size;
-        let j = (y as usize) / block_size;
+        d += 1.0;
+    }
+}
 
-        if j >= maze.len() || i >= maze[0].len() {
-            // chocó con el límite del mundo
-            return Intersect {
-                distance: d,
-                impact: '#',
-            };
-        }
+/// Colores por tipo de pared
+fn wall_color(c: char) -> u32 {
+    match c {
+        '#' => 0x808080, // gris
+        'A' => 0xFF0000, // rojo
+        'B' => 0x0000FF, // azul
+        'C' => 0x00FF00, // verde
+        _ => 0xFFFFFF,   // blanco por defecto
+    }
+}
 
-        let cell = maze[j][i];
-        if cell != ' ' {
-            return Intersect {
-                distance: d,
-                impact: cell,
-            };
-        }
+pub fn render3d(framebuffer: &mut Framebuffer, player: &Player, maze: &Vec<Vec<char>>) {
+    let block_size = 64;
+    let num_rays = framebuffer.width;
 
-        d += step;
-        if d > 5000.0 {
-            // límite de seguridad
-            return Intersect {
-                distance: d,
-                impact: ' ',
-            };
+    let hh = framebuffer.height as f32 / 2.0;
+
+    for i in 0..num_rays {
+        let current_ray = i as f32 / num_rays as f32;
+        let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
+
+        let intersect = cast_ray(maze, player, a, block_size);
+
+        let distance_to_wall = intersect.distance * (player.a - a).cos();
+        let distance_to_projection_plane = hh;
+
+        let stake_height = (hh / distance_to_wall) * distance_to_projection_plane;
+
+        let stake_top = (hh - (stake_height / 2.0)).max(0.0) as usize;
+        let stake_bottom = (hh + (stake_height / 2.0)).min(framebuffer.height as f32) as usize;
+
+        let color = wall_color(intersect.impact);
+
+        for y in stake_top..stake_bottom {
+            framebuffer.set_color_point(i, y, color);
         }
     }
+}
+
+/// Cargar mapa desde archivo
+pub fn load_maze(path: &str) -> Vec<Vec<char>> {
+    use std::fs::read_to_string;
+    let contents = read_to_string(path).expect("No se pudo leer el archivo");
+    contents
+        .lines()
+        .map(|line| line.chars().collect())
+        .collect()
 }
