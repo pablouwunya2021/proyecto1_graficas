@@ -1,19 +1,10 @@
 use crate::framebuffer::Framebuffer;
 use crate::player::Player;
+use crate::textures::Textures;
 
 pub struct Intersect {
     pub distance: f32,
     pub impact: char,
-}
-
-fn wall_color(c: char) -> u32 {
-    match c {
-        '#' => 0xAAAAAA, // gris
-        'A' => 0xFF5555, // rojo
-        'B' => 0x55FF55, // verde
-        'C' => 0x5555FF, // azul
-        _   => 0xFFFFFF, // blanco
-    }
 }
 
 pub fn cast_ray(
@@ -29,62 +20,53 @@ pub fn cast_ray(
         let x = player.pos.x + a.cos() * d;
         let y = player.pos.y + a.sin() * d;
 
-        if x < 0.0 || y < 0.0 {
-            return Intersect { distance: d, impact: '#' };
-        }
+        if x < 0.0 || y < 0.0 { return Intersect { distance: d, impact: '#' }; }
 
         let i = (x as usize) / block_size;
         let j = (y as usize) / block_size;
 
-        if j >= maze.len() || i >= maze[0].len() {
-            return Intersect { distance: d, impact: '#' };
-        }
+        if j >= maze.len() || i >= maze[0].len() { return Intersect { distance: d, impact: '#' }; }
 
         let cell = maze[j][i];
-        if cell != ' ' {
-            return Intersect { distance: d, impact: cell };
-        }
+        if cell != ' ' { return Intersect { distance: d, impact: cell }; }
 
         d += step;
-        if d > 5000.0 {
-            return Intersect { distance: d, impact: ' ' };
-        }
+        if d > 5000.0 { return Intersect { distance: d, impact: ' ' }; }
     }
 }
 
-pub fn render3d(framebuffer: &mut Framebuffer, player: &Player, maze: &Vec<Vec<char>>, block_size: usize) {
+pub fn render3d(framebuffer: &mut Framebuffer, player: &Player, maze: &Vec<Vec<char>>, block_size: usize, textures: &Textures) {
     let w = framebuffer.width;
     let h = framebuffer.height;
     let hh = h as f32 / 2.0;
 
     // cielo y piso
-    for y in 0..(h / 2) {
-        for x in 0..w { framebuffer.point(x, y, 0x303050); }
-    }
-    for y in (h / 2)..h {
-        for x in 0..w { framebuffer.point(x, y, 0x202020); }
-    }
+    for y in 0..(h / 2) { for x in 0..w { framebuffer.point(x, y, 0x303050); } }
+    for y in (h / 2)..h { for x in 0..w { framebuffer.point(x, y, 0x202020); } }
 
-    // columnas (ray casting)
+    // raycasting columnas
     for x in 0..w {
         let t = x as f32 / w as f32;
         let a = player.a - (player.fov / 2.0) + player.fov * t;
 
         let hit = cast_ray(maze, player, a, block_size);
-
         let distance = hit.distance * (player.a - a).cos(); // corrección fish-eye
         if distance <= 0.0 { continue; }
 
         let stake_h = (block_size as f32 * hh) / distance;
-
         let top = (hh - stake_h / 2.0).max(0.0) as usize;
         let bot = (hh + stake_h / 2.0).min((h - 1) as f32) as usize;
 
-        let color = wall_color(hit.impact);
+        // Coordenada horizontal en la textura (0..1)
+        let wall_x = (player.pos.x + a.cos() * hit.distance) % block_size as f32 / block_size as f32;
+
         for y in top..=bot {
+            let v = (y - top) as f32 / (bot - top + 1) as f32; // coordenada vertical (0..1)
+            let color = textures.sample(hit.impact, wall_x, v);
             framebuffer.point(x, y, color);
         }
     }
+    
 
     // minimapa
     render_minimap(framebuffer, player, maze, 10, 10, 4, block_size);
@@ -100,16 +82,33 @@ pub fn render_minimap(
     block_size: usize,
 ) {
     // celdas
-    for (j, row) in maze.iter().enumerate() {
-        for (i, &cell) in row.iter().enumerate() {
-            let color = if cell == ' ' { 0x000000 } else { wall_color(cell) };
-            for dx in 0..scale {
-                for dy in 0..scale {
-                    fb.point(x_off + i * scale + dx, y_off + j * scale + dy, color);
-                }
+/// Devuelve un color sólido para el mini mapa según el tipo de pared
+pub fn wall_color(c: char) -> u32 {
+    match c {
+        '#' => 0x808080, // gris
+        'A' => 0xFF0000, // rojo
+        'B' => 0x00FF00, // verde
+        'C' => 0x0000FF, // azul
+        _   => 0xFFFFFF, // blanco por defecto
+    }
+}
+
+// mini mapa
+let scale = 8;
+let x_off = 5;
+let y_off = 5;
+
+for (j, row) in maze.iter().enumerate() {
+    for (i, &cell) in row.iter().enumerate() {
+        let color = if cell == ' ' { 0x000000 } else { wall_color(cell) };
+        for dx in 0..scale {
+            for dy in 0..scale {
+                fb.point(x_off + i * scale + dx, y_off + j * scale + dy, color);
             }
         }
     }
+}
+
 
     // jugador como flecha
     let px = x_off as f32 + (player.pos.x / block_size as f32) * scale as f32;
