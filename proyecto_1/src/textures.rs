@@ -10,9 +10,9 @@ impl Textures {
         let mut map = HashMap::new();
 
         map.insert('#', image::open("textures/pared.png").unwrap());
-        map.insert('A', image::open("textures/twilight.png").unwrap());
-        map.insert('B', image::open("textures/pinky.png").unwrap());
-        map.insert('C', image::open("textures/apple.png").unwrap());
+        map.insert('A', image::open("textures/A.png").unwrap());
+        map.insert('B', image::open("textures/B.png").unwrap());
+        map.insert('C', image::open("textures/C.png").unwrap());
 
         Textures { map }
     }

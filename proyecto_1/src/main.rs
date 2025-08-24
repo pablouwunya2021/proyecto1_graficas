@@ -2,19 +2,25 @@ mod framebuffer;
 mod player;
 mod raycaster;
 mod textures;
+mod enemy;
+
+
 
 use framebuffer::Framebuffer;
 use minifb::{Key, Window, WindowOptions};
 use player::Player;
 use raycaster::{render3d, load_maze};
+use rodio::Source;
 use textures::Textures;
-
+use enemy::Enemy;
 use std::time::Instant;
 
 // --- Texto con rusttype ---
 use rusttype::{Font, Scale, point};
 use std::fs::File;
 use std::io::Read;
+use std::io::BufReader;
+use rodio::{Decoder, OutputStream, Sink};
 
 const WIDTH: usize = 640;
 const HEIGHT: usize = 480;
@@ -30,10 +36,12 @@ fn main() {
     .unwrap();
 
     // Cargar fuente una sola vez
-    let font = load_font("fonts/OpenSans-VariableFont_wdth,wght.ttf");
+    let font = load_font("fonts/Arial.ttf");
+    
+    let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
+    start_screen(&mut window, &mut framebuffer, &font);
 
     let mut buffer = vec![0u32; WIDTH * HEIGHT];
-    let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
 
     let maze = load_maze("./maze.txt");
     let textures = Textures::new();
@@ -44,9 +52,27 @@ fn main() {
         0.0,   // ángulo
         std::f32::consts::FRAC_PI_2, // FOV ~ 90°
     );
+    let mut enemies = vec![
+    Enemy::new(200.0, 200.0, &["sprites/enemy1.png", "sprites/enemy2.png"]),
+    Enemy::new(400.0, 300.0, &["sprites/enemy1.png", "sprites/enemy2.png"]),
+    ];
+
+
+      // --- Música de fondo ---
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+    let sink = Sink::try_new(&stream_handle).unwrap();
+
+    // Cargar archivo de música
+    let file = BufReader::new(File::open("assets/music.ogg").unwrap());
+    let source = Decoder::new(file).unwrap();
+
+    // Reproducir en bucle
+    sink.append(source.repeat_infinite());
+    sink.play();
 
     // Velocidades
-    let move_speed = 4.0;
+    let base_speed = 4.0;      // velocidad normal
+    let run_multiplier = 1.8;  // factor de correr
     let rot_speed = 0.05;
 
     // FPS
@@ -61,6 +87,12 @@ fn main() {
 
         // Limpiar
         framebuffer.clear(0x000000);
+
+        // --- VELOCIDAD VARIABLE ---
+        let mut move_speed = base_speed;
+        if window.is_key_down(Key::LeftShift) {
+            move_speed *= run_multiplier; // correr con SHIFT
+        }
 
         // Controles
         if window.is_key_down(Key::Left) || window.is_key_down(Key::A) {
@@ -79,6 +111,20 @@ fn main() {
         // Render 3D
         render3d(&mut framebuffer, &player, &maze, BLOCK_SIZE, &textures);
 
+           // --- 🚀 Enemigos ---
+    for enemy in enemies.iter_mut() {
+        enemy.update(&maze, BLOCK_SIZE);
+        enemy.animate();
+    }
+
+    // --- Render mundo ---
+    render3d(&mut framebuffer, &player, &maze, BLOCK_SIZE, &textures);
+
+    // --- Render enemigos ---
+    for enemy in enemies.iter() {
+        enemy.draw_3d(&mut framebuffer, &player, WIDTH, HEIGHT);
+    }
+
         // Minimap (esquina superior izquierda)
         render_minimap(&mut framebuffer, &player, &maze, 8, 8, 6);
 
@@ -88,15 +134,75 @@ fn main() {
             &mut framebuffer,
             &font,
             &fps_text,
-            WIDTH.saturating_sub(140), // ajuste horizontal para esquina derecha
-            14,                        // un poco hacia abajo
-            0xFFFF00,                  // amarillo
-            18.0,                      // tamaño de fuente
+            WIDTH.saturating_sub(140),
+            14,
+            0xFFFF00,
+            18.0,
         );
 
         // Volcar al buffer lineal y mostrar
         framebuffer.flush_to(&mut buffer);
         window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
+    }
+}
+
+fn start_screen(window: &mut Window, framebuffer: &mut Framebuffer, font: &Font) {
+    let mut buffer = vec![0u32; WIDTH * HEIGHT];
+
+    // Cargar imagen de fondo (asegúrate que exista en assets/)
+    let mut img = image::open("assets/Radioheadkida.png")
+    .expect("No se pudo cargar la imagen de fondo de inicio")
+    .resize_exact(WIDTH as u32, HEIGHT as u32, image::imageops::FilterType::Nearest);
+
+    // Convertir a RGB y escalar a la resolución de la ventana
+    let img = img.resize(WIDTH as u32, HEIGHT as u32, image::imageops::FilterType::Triangle);
+    let img_buf = img.to_rgb8();
+
+    loop {
+        // Copiar imagen como fondo
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let px = img_buf.get_pixel(x as u32, y as u32);
+                let r = px[0] as u32;
+                let g = px[1] as u32;
+                let b = px[2] as u32;
+                framebuffer.point(x, y, (r << 16) | (g << 8) | b);
+            }
+        }
+
+        // Texto encima
+        draw_text(
+            framebuffer,
+            font,
+            "Raycaster Demo",
+            WIDTH / 2 - 160,
+            HEIGHT / 2 - 50,
+            0xFFFFFF,
+            40.0,
+        );
+
+        draw_text(
+            framebuffer,
+            font,
+            "Presiona ENTER para comenzar",
+            WIDTH / 2 - 200,
+            HEIGHT / 2 + 20,
+            0xFFFF00,
+            24.0,
+        );
+
+        // Mostrar en ventana
+        framebuffer.flush_to(&mut buffer);
+        window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
+
+        // Esperar ENTER
+        if window.is_key_down(Key::Enter) {
+            break;
+        }
+
+        if !window.is_open() || window.is_key_down(Key::Escape) {
+            std::process::exit(0);
+        }
     }
 }
 
@@ -190,7 +296,7 @@ fn draw_line(fb: &mut Framebuffer, x0: i32, y0: i32, x1: i32, y1: i32, color: u3
 
 fn load_font(path: &str) -> Font<'static> {
     let mut data = Vec::new();
-    File::open(path).expect("No se pudo abrir la fuente (fonts/OpenSans-VariableFont_wdth,wght.ttf)")
+    File::open(path).expect("No se pudo abrir la fuente (fonts/Arial.ttf)")
         .read_to_end(&mut data)
         .expect("No se pudo leer la fuente");
     Font::try_from_vec(data).expect("Fuente inválida o corrupta")
