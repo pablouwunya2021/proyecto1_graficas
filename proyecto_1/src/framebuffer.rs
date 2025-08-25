@@ -1,7 +1,7 @@
 pub struct Framebuffer {
     pub width: usize,
     pub height: usize,
-    buffer: Vec<Vec<u32>>,
+    buffer: Vec<u32>, // Buffer lineal para mejor rendimiento
 }
 
 impl Framebuffer {
@@ -9,31 +9,40 @@ impl Framebuffer {
         Self {
             width,
             height,
-            buffer: vec![vec![0; height]; width],
+            buffer: vec![0; width * height],
         }
     }
 
     pub fn clear(&mut self, color: u32) {
-        for x in 0..self.width {
-            for y in 0..self.height {
-                self.buffer[x][y] = color;
-            }
+        for pixel in &mut self.buffer {
+            *pixel = color;
         }
     }
 
     pub fn point(&mut self, x: usize, y: usize, color: u32) {
         if x < self.width && y < self.height {
-            self.buffer[x][y] = color;
+            self.buffer[y * self.width + x] = color;
         }
     }
 
     pub fn flush_to(&self, out: &mut [u32]) {
-        // out es lineal: fila mayor, luego columna
-        for y in 0..self.height {
-            for x in 0..self.width {
-                out[y * self.width + x] = self.buffer[x][y];
+        out.copy_from_slice(&self.buffer);
+    }
+    
+    // Nuevo método para dibujar rectángulos rellenos
+    pub fn fill_rect(&mut self, x: usize, y: usize, width: usize, height: usize, color: u32) {
+        for dy in 0..height {
+            let current_y = y + dy;
+            if current_y >= self.height {
+                continue;
+            }
+            
+            for dx in 0..width {
+                let current_x = x + dx;
+                if current_x < self.width {
+                    self.buffer[current_y * self.width + current_x] = color;
+                }
             }
         }
     }
 }
-

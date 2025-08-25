@@ -5,6 +5,7 @@ use crate::textures::Textures;
 pub struct Intersect {
     pub distance: f32,
     pub impact: char,
+    pub object_type: Option<char>, // Nuevo: para identificar objetos
 }
 
 pub fn cast_ray(
@@ -20,18 +21,52 @@ pub fn cast_ray(
         let x = player.pos.x + a.cos() * d;
         let y = player.pos.y + a.sin() * d;
 
-        if x < 0.0 || y < 0.0 { return Intersect { distance: d, impact: '#' }; }
+        if x < 0.0 || y < 0.0 { 
+            return Intersect { 
+                distance: d, 
+                impact: '#',
+                object_type: None,
+            }; 
+        }
 
         let i = (x as usize) / block_size;
         let j = (y as usize) / block_size;
 
-        if j >= maze.len() || i >= maze[0].len() { return Intersect { distance: d, impact: '#' }; }
+        if j >= maze.len() || i >= maze[0].len() { 
+            return Intersect { 
+                distance: d, 
+                impact: '#',
+                object_type: None,
+            }; 
+        }
 
         let cell = maze[j][i];
-        if cell != ' ' { return Intersect { distance: d, impact: cell }; }
+        
+        // Detectar objetos (1, 2, 3)
+        if cell == '1' || cell == '2' || cell == '3' {
+            return Intersect { 
+                distance: d, 
+                impact: ' ', // No es una pared
+                object_type: Some(cell), // Indicamos que es un objeto
+            };
+        }
+        
+        if cell != ' ' { 
+            return Intersect { 
+                distance: d, 
+                impact: cell,
+                object_type: None,
+            }; 
+        }
 
         d += step;
-        if d > 5000.0 { return Intersect { distance: d, impact: ' ' }; }
+        if d > 5000.0 { 
+            return Intersect { 
+                distance: d, 
+                impact: ' ',
+                object_type: None,
+            }; 
+        }
     }
 }
 
@@ -45,11 +80,36 @@ pub fn render3d(framebuffer: &mut Framebuffer, player: &Player, maze: &Vec<Vec<c
     for y in (h / 2)..h { for x in 0..w { framebuffer.point(x, y, 0x202020); } }
 
     // raycasting columnas
-    for x in 0..w {
+     for x in 0..w {
         let t = x as f32 / w as f32;
         let a = player.a - (player.fov / 2.0) + player.fov * t;
 
         let hit = cast_ray(maze, player, a, block_size);
+        
+        // Renderizar objetos (esferas) con sus texturas
+        if let Some(obj_type) = hit.object_type {
+            let distance = hit.distance * (player.a - a).cos();
+            if distance > 0.0 {
+                let stake_h = (block_size as f32 * hh) / distance;
+                let top = (hh - stake_h / 2.0).max(0.0) as usize;
+                let bot = (hh + stake_h / 2.0).min((h - 1) as f32) as usize;
+                
+                // Solo renderizar si está en el centro de la pantalla (aproximadamente)
+                if x > w/2 - 20 && x < w/2 + 20 {
+                    for y in top..=bot {
+                        // Calcular coordenadas UV para la textura del objeto
+                        let rel_y = (y - top) as f32 / (bot - top + 1) as f32;
+                        let rel_x = 0.5; // Centrado en la textura para objetos esféricos
+                        
+                        // Obtener color de la textura del objeto
+                        let color = textures.sample(obj_type, rel_x, rel_y);
+                        framebuffer.point(x, y, color);
+                    }
+                }
+            }
+            continue;
+        }
+        
         let distance = hit.distance * (player.a - a).cos(); // corrección fish-eye
         if distance <= 0.0 { continue; }
 
@@ -81,59 +141,64 @@ pub fn render_minimap(
     scale: usize,
     block_size: usize,
 ) {
-    // celdas
-/// Devuelve un color sólido para el mini mapa según el tipo de pared
-pub fn wall_color(c: char) -> u32 {
-    match c {
-        '#' => 0x808080, // gris
-        'A' => 0xFF0000, // rojo
-        'B' => 0x00FF00, // verde
-        'C' => 0x0000FF, // azul
-        _   => 0xFFFFFF, // blanco por defecto
+    // Colores por tipo de pared SOLO para el minimapa
+    fn wall_color(c: char) -> u32 {
+        match c {
+            '#' => 0x808080, // gris
+            'A' => 0xCC3333, // rojo
+            'B' => 0x33CC33, // verde
+            'C' => 0x3333CC, // azul
+            '1' => 0xFF0000, // objeto 1 rojo
+            '2' => 0x00FF00, // objeto 2 verde
+            '3' => 0x0000FF, // objeto 3 azul
+            _   => 0x606060, // otros
+        }
     }
-}
 
-// mini mapa
-let scale = 8;
-let x_off = 5;
-let y_off = 5;
-
-for (j, row) in maze.iter().enumerate() {
-    for (i, &cell) in row.iter().enumerate() {
-        let color = if cell == ' ' { 0x000000 } else { wall_color(cell) };
-        for dx in 0..scale {
-            for dy in 0..scale {
-                fb.point(x_off + i * scale + dx, y_off + j * scale + dy, color);
+    // Celdas del mapa
+    for (j, row) in maze.iter().enumerate() {
+        for (i, &cell) in row.iter().enumerate() {
+            let color = if cell == ' ' { 0x000000 } else { wall_color(cell) };
+            for dx in 0..scale {
+                for dy in 0..scale {
+                    let px = x_off + i * scale + dx;
+                    let py = y_off + j * scale + dy;
+                    if px < fb.width && py < fb.height {
+                        fb.point(px, py, color);
+                    }
+                }
             }
         }
     }
-}
 
-
-    // jugador como flecha
+    // Jugador: convertir coordenadas del mundo -> minimapa
     let px = x_off as f32 + (player.pos.x / block_size as f32) * scale as f32;
     let py = y_off as f32 + (player.pos.y / block_size as f32) * scale as f32;
 
-    let size = 5.0;
-    let a = player.a;
-    let tip_x = px + a.cos() * size;
-    let tip_y = py + a.sin() * size;
-    let base_l_x = px + (a + 2.5).cos() * (size * 0.5);
-    let base_l_y = py + (a + 2.5).sin() * (size * 0.5);
-    let base_r_x = px + (a - 2.5).cos() * (size * 0.5);
-    let base_r_y = py + (a - 2.5).sin() * (size * 0.5);
+    // Dibujar al jugador como un disco pequeño
+    let r = (scale as i32 / 3).max(2); // radio
+    for dy in -r..=r {
+        for dx in -r..=r {
+            if dx*dx + dy*dy <= r*r {
+                let mx = px as i32 + dx;
+                let my = py as i32 + dy;
+                if mx >= 0 && my >= 0 && (mx as usize) < fb.width && (my as usize) < fb.height {
+                    fb.point(mx as usize, my as usize, 0xFFFF00);
+                }
+            }
+        }
+    }
 
-    draw_line(fb, px, py, tip_x, tip_y, 0xFFFF00);
-    draw_line(fb, px, py, base_l_x, base_l_y, 0xFFFF00);
-    draw_line(fb, px, py, base_r_x, base_r_y, 0xFFFF00);
+    // Pequeño "heading" (línea) indicando hacia dónde mira
+    let len = (scale as f32 * 0.9).max(4.0);
+    let tip_x = px + player.a.cos() * len;
+    let tip_y = py + player.a.sin() * len;
+    draw_line(fb, px as i32, py as i32, tip_x as i32, tip_y as i32, 0xFFFF00);
 }
 
-fn draw_line(fb: &mut Framebuffer, x0: f32, y0: f32, x1: f32, y1: f32, color: u32) {
-    let mut x0 = x0 as i32;
-    let mut y0 = y0 as i32;
-    let x1 = x1 as i32;
-    let y1 = y1 as i32;
-
+fn draw_line(fb: &mut Framebuffer, x0: i32, y0: i32, x1: i32, y1: i32, color: u32) {
+    let mut x0 = x0;
+    let mut y0 = y0;
     let dx = (x1 - x0).abs();
     let sx = if x0 < x1 { 1 } else { -1 };
     let dy = -(y1 - y0).abs();
@@ -141,7 +206,7 @@ fn draw_line(fb: &mut Framebuffer, x0: f32, y0: f32, x1: f32, y1: f32, color: u3
     let mut err = dx + dy;
 
     loop {
-        if x0 >= 0 && y0 >= 0 {
+        if x0 >= 0 && y0 >= 0 && (x0 as usize) < fb.width && (y0 as usize) < fb.height {
             fb.point(x0 as usize, y0 as usize, color);
         }
         if x0 == x1 && y0 == y1 { break; }

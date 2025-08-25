@@ -13,11 +13,14 @@ impl Textures {
         map.insert('A', image::open("textures/A.png").unwrap());
         map.insert('B', image::open("textures/B.png").unwrap());
         map.insert('C', image::open("textures/C.png").unwrap());
+        map.insert('1', image::open("textures/ok.png").unwrap());
+        map.insert('2', image::open("textures/enemy1.png").unwrap());
+        map.insert('3', image::open("textures/enemy2.png").unwrap());
 
         Textures { map }
     }
 
-    /// Obtener color de la textura en coordenada x, y (0..1)
+    /// Obtener color de la textura en coordenada u,v (0..1)
     pub fn sample(&self, c: char, u: f32, v: f32) -> u32 {
         if let Some(img) = self.map.get(&c) {
             let w = img.width() as f32;

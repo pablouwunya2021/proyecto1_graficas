@@ -2,9 +2,6 @@ mod framebuffer;
 mod player;
 mod raycaster;
 mod textures;
-mod enemy;
-
-
 
 use framebuffer::Framebuffer;
 use minifb::{Key, Window, WindowOptions};
@@ -12,7 +9,7 @@ use player::Player;
 use raycaster::{render3d, load_maze};
 use rodio::Source;
 use textures::Textures;
-use enemy::Enemy;
+
 use std::time::Instant;
 
 // --- Texto con rusttype ---
@@ -25,10 +22,11 @@ use rodio::{Decoder, OutputStream, Sink};
 const WIDTH: usize = 640;
 const HEIGHT: usize = 480;
 const BLOCK_SIZE: usize = 64; // Debe coincidir con raycaster y colisiones
+const TOTAL_ITEMS: u32 = 3; // Total de objetos a recolectar
 
 fn main() {
     let mut window = Window::new(
-        "Raycaster con Texturas, Minimap y FPS",
+        "Raycaster con Objetivos y Texturas",
         WIDTH,
         HEIGHT,
         WindowOptions::default(),
@@ -43,7 +41,7 @@ fn main() {
 
     let mut buffer = vec![0u32; WIDTH * HEIGHT];
 
-    let maze = load_maze("./maze.txt");
+    let mut maze = load_maze("./maze.txt");
     let textures = Textures::new();
 
     let mut player = Player::new(
@@ -52,13 +50,8 @@ fn main() {
         0.0,   // ángulo
         std::f32::consts::FRAC_PI_2, // FOV ~ 90°
     );
-    let mut enemies = vec![
-    Enemy::new(200.0, 200.0, &["sprites/enemy1.png", "sprites/enemy2.png"]),
-    Enemy::new(400.0, 300.0, &["sprites/enemy1.png", "sprites/enemy2.png"]),
-    ];
 
-
-      // --- Música de fondo ---
+    // --- Música de fondo ---
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
 
@@ -107,26 +100,70 @@ fn main() {
         if window.is_key_down(Key::Down) || window.is_key_down(Key::S) {
             player.move_backward(move_speed, &maze, BLOCK_SIZE);
         }
+        if window.is_key_pressed(Key::X, minifb::KeyRepeat::No) {
+            // Lanzar un rayo hacia adelante para detectar objetos
+            let hit = raycaster::cast_ray(&maze, &player, player.a, BLOCK_SIZE);
+            
+            if let Some(obj_type) = hit.object_type {
+                if hit.distance < 50.0 { // Solo si está cerca
+                    println!("Recolectado objeto: {}", obj_type);
+                    player.collect_item();
+                    
+                    // "Eliminar" el objeto del mapa (reemplazar con espacio)
+                    let obj_x = (player.pos.x + player.a.cos() * hit.distance) as usize / BLOCK_SIZE;
+                    let obj_y = (player.pos.y + player.a.sin() * hit.distance) as usize / BLOCK_SIZE;
+                    
+                    if obj_y < maze.len() && obj_x < maze[0].len() {
+                        maze[obj_y][obj_x] = ' ';
+                    }
+                    
+                    // Reproducir sonido de recolección
+                    play_sound("assets/collect.wav");
+                }
+            }
+        }
+        
+        // Detectar si el jugador está mirando un objeto y presiona E para recolectar
+        if window.is_key_pressed(Key::E, minifb::KeyRepeat::No) {
+            // Lanzar un rayo hacia adelante para detectar objetos
+            let hit = raycaster::cast_ray(&maze, &player, player.a, BLOCK_SIZE);
+            
+            if let Some(obj_type) = hit.object_type {
+                if hit.distance < 50.0 { // Solo si está cerca
+                    println!("Recolectado objeto: {}", obj_type);
+                    player.collect_item();
+                    
+                    // "Eliminar" el objeto del mapa (reemplazar con espacio)
+                    let obj_x = (player.pos.x + player.a.cos() * hit.distance) as usize / BLOCK_SIZE;
+                    let obj_y = (player.pos.y + player.a.sin() * hit.distance) as usize / BLOCK_SIZE;
+                    
+                    if obj_y < maze.len() && obj_x < maze[0].len() {
+                        maze[obj_y][obj_x] = ' ';
+                    }
+                    
+                    // Reproducir sonido de recolección
+                    play_sound("assets/collect.wav");
+                }
+            }
+        }
 
         // Render 3D
         render3d(&mut framebuffer, &player, &maze, BLOCK_SIZE, &textures);
 
-           // --- 🚀 Enemigos ---
-    for enemy in enemies.iter_mut() {
-        enemy.update(&maze, BLOCK_SIZE);
-        enemy.animate();
-    }
-
-    // --- Render mundo ---
-    render3d(&mut framebuffer, &player, &maze, BLOCK_SIZE, &textures);
-
-    // --- Render enemigos ---
-    for enemy in enemies.iter() {
-        enemy.draw_3d(&mut framebuffer, &player, WIDTH, HEIGHT);
-    }
-
         // Minimap (esquina superior izquierda)
         render_minimap(&mut framebuffer, &player, &maze, 8, 8, 6);
+
+        // Mostrar contador de objetos recolectados
+        let items_text = format!("Objetos: {}/{}", player.get_collected_items(), TOTAL_ITEMS);
+        draw_text(
+            &mut framebuffer,
+            &font,
+            &items_text,
+            14,
+            14,
+            0xFFFF00,
+            18.0,
+        );
 
         // FPS (esquina superior derecha)
         let fps_text = format!("FPS: {:.0}", fps);
@@ -143,6 +180,12 @@ fn main() {
         // Volcar al buffer lineal y mostrar
         framebuffer.flush_to(&mut buffer);
         window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
+        
+        // Comprobar si se han recolectado todos los objetos
+        if player.has_all_items(TOTAL_ITEMS) {
+            victory_screen(&mut window, &mut framebuffer, &font);
+            break;
+        }
     }
 }
 
@@ -174,7 +217,7 @@ fn start_screen(window: &mut Window, framebuffer: &mut Framebuffer, font: &Font)
         draw_text(
             framebuffer,
             font,
-            "Raycaster Demo",
+            "atrapa el radio objeto",
             WIDTH / 2 - 160,
             HEIGHT / 2 - 50,
             0xFFFFFF,
@@ -206,6 +249,76 @@ fn start_screen(window: &mut Window, framebuffer: &mut Framebuffer, font: &Font)
     }
 }
 
+fn victory_screen(window: &mut Window, framebuffer: &mut Framebuffer, font: &Font) {
+    let mut buffer = vec![0u32; WIDTH * HEIGHT];
+    
+    // Cargar imagen de victoria
+    let mut img = image::open("assets/victory.png")
+        .unwrap_or_else(|_| image::DynamicImage::new_rgb8(WIDTH as u32, HEIGHT as u32))
+        .resize_exact(WIDTH as u32, HEIGHT as u32, image::imageops::FilterType::Nearest);
+    
+    let img_buf = img.to_rgb8();
+    
+    loop {
+        // Fondo con imagen
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let px = img_buf.get_pixel(x as u32, y as u32);
+                let r = px[0] as u32;
+                let g = px[1] as u32;
+                let b = px[2] as u32;
+                framebuffer.point(x, y, (r << 16) | (g << 8) | b);
+            }
+        }
+        
+        draw_text(
+            framebuffer,
+            font,
+            "¡FELICIDADES!",
+            WIDTH / 2 - 150,
+            HEIGHT / 2 - 50,
+            0x00FF00,
+            40.0,
+        );
+        
+        draw_text(
+            framebuffer,
+            font,
+            "Has recolectado todos los objetos",
+            WIDTH / 2 - 200,
+            HEIGHT / 2 + 20,
+            0xFFFFFF,
+            24.0,
+        );
+        
+        draw_text(
+            framebuffer,
+            font,
+            "Presiona ESC para salir",
+            WIDTH / 2 - 150,
+            HEIGHT / 2 + 70,
+            0xFFFF00,
+            20.0,
+        );
+
+        framebuffer.flush_to(&mut buffer);
+        window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
+
+        if window.is_key_down(Key::Escape) {
+            break;
+        }
+    }
+}
+
+fn play_sound(path: &str) {
+    // Implementación básica para reproducir sonido
+    if let Ok(file) = File::open(path) {
+        let source = Decoder::new(BufReader::new(file)).unwrap();
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+        let _result = stream_handle.play_raw(source.convert_samples());
+    }
+}
+
 // ============================================================================
 // Minimap (con jugador correctamente escalado)
 // ============================================================================
@@ -224,6 +337,9 @@ fn render_minimap(
             'A' => 0xCC3333, // rojo
             'B' => 0x33CC33, // verde
             'C' => 0x3333CC, // azul
+            '1' => 0xFF0000, // objeto 1 rojo
+            '2' => 0x00FF00, // objeto 2 verde
+            '3' => 0x0000FF, // objeto 3 azul
             _   => 0x606060, // otros
         }
     }
@@ -262,7 +378,7 @@ fn render_minimap(
         }
     }
 
-    // Pequeño “heading” (línea) indicando hacia dónde mira
+    // Pequeño "heading" (línea) indicando hacia dónde mira
     let len = (scale as f32 * 0.9).max(4.0);
     let tip_x = px + player.a.cos() * len;
     let tip_y = py + player.a.sin() * len;

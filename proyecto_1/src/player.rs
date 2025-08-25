@@ -2,7 +2,8 @@ pub struct Player {
     pub pos: Position,
     pub a: f32,     // ángulo (rad)
     pub fov: f32,   // campo de visión (rad)
-    pub radius: f32 // radio de colisión (en unidades del mundo)
+    pub radius: f32, // radio de colisión (en unidades del mundo)
+    pub collected_items: u32, // Nuevo: contador de objetos recolectados
 }
 
 pub struct Position {
@@ -17,6 +18,7 @@ impl Player {
             a,
             fov,
             radius: 10.0, // ajusta al gusto
+            collected_items: 0, // Inicializar en 0
         }
     }
 
@@ -34,6 +36,7 @@ impl Player {
         let dy = -self.a.sin() * step;
         self.try_move(dx, dy, maze, block);
     }
+    
 
     /// Movimiento con "deslizamiento": prueba eje X y eje Y por separado
     fn try_move(&mut self, dx: f32, dy: f32, maze: &Vec<Vec<char>>, block: usize) {
@@ -45,6 +48,19 @@ impl Player {
         if !collides(maze, self.pos.x, ny, self.radius, block) {
             self.pos.y = ny;
         }
+    }
+    
+    // Nuevos métodos para el sistema de recolección
+    pub fn collect_item(&mut self) {
+        self.collected_items += 1;
+    }
+
+    pub fn has_all_items(&self, total_items: u32) -> bool {
+        self.collected_items >= total_items
+    }
+    
+    pub fn get_collected_items(&self) -> u32 {
+        self.collected_items
     }
 }
 
