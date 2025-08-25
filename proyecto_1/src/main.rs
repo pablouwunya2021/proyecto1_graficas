@@ -33,15 +33,27 @@ fn main() {
     )
     .unwrap();
 
-    // Cargar fuente una sola vez
-    let font = load_font("fonts/Arial.ttf");
-    
-    let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
-    start_screen(&mut window, &mut framebuffer, &font);
+// Cargar fuente una sola vez
+let font = load_font("fonts/Arial.ttf");
+
+let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
+start_screen(&mut window, &mut framebuffer, &font);
+
+// Mostrar menú y obtener nivel seleccionado
+let selected_level = menu(&mut window, &mut framebuffer, &font);
+
+let maze_file = match selected_level {
+    1 => "./maze1.txt",
+    2 => "./maze2.txt",
+    3 => "./maze3.txt",
+    _ => "./maze1.txt",
+};
+
+let mut maze = load_maze(maze_file);
 
     let mut buffer = vec![0u32; WIDTH * HEIGHT];
 
-    let mut maze = load_maze("./maze.txt");
+    
     let textures = Textures::new();
 
     let mut player = Player::new(
@@ -100,7 +112,7 @@ fn main() {
         if window.is_key_down(Key::Down) || window.is_key_down(Key::S) {
             player.move_backward(move_speed, &maze, BLOCK_SIZE);
         }
-        if window.is_key_pressed(Key::X, minifb::KeyRepeat::No) {
+          if window.is_key_pressed(Key::X, minifb::KeyRepeat::No) {
             // Lanzar un rayo hacia adelante para detectar objetos
             let hit = raycaster::cast_ray(&maze, &player, player.a, BLOCK_SIZE);
             
@@ -118,10 +130,16 @@ fn main() {
                     }
                     
                     // Reproducir sonido de recolección
-                    play_sound("assets/collect.wav");
+                    play_sound("assets/collect.ogg");
                 }
             }
         }
+         // Render 3D
+         render3d(&mut framebuffer, &player, &maze, BLOCK_SIZE, &textures);
+        
+        // Renderizar sprites de objetos
+        
+
         
         // Detectar si el jugador está mirando un objeto y presiona E para recolectar
         if window.is_key_pressed(Key::E, minifb::KeyRepeat::No) {
@@ -245,6 +263,97 @@ fn start_screen(window: &mut Window, framebuffer: &mut Framebuffer, font: &Font)
 
         if !window.is_open() || window.is_key_down(Key::Escape) {
             std::process::exit(0);
+        }
+    }
+}
+fn menu(window: &mut Window, framebuffer: &mut Framebuffer, font: &Font) -> u8 {
+    let mut buffer = vec![0u32; WIDTH * HEIGHT];
+
+    loop {
+        framebuffer.clear(0x000000);
+
+        draw_text(framebuffer, font, "Selecciona un nivel:", WIDTH/2 - 140, HEIGHT/2 - 100, 0xFFFFFF, 32.0);
+        draw_text(framebuffer, font, "1 - Nivel 1", WIDTH/2 - 60, HEIGHT/2 - 40, 0x00FF00, 24.0);
+        draw_text(framebuffer, font, "2 - Nivel 2", WIDTH/2 - 60, HEIGHT/2, 0x00FF00, 24.0);
+        draw_text(framebuffer, font, "3 - Nivel 3", WIDTH/2 - 60, HEIGHT/2 + 40, 0x00FF00, 24.0);
+
+        framebuffer.flush_to(&mut buffer);
+        window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
+
+        if window.is_key_down(Key::Key1) { return 1; }
+        if window.is_key_down(Key::Key2) { return 2; }
+        if window.is_key_down(Key::Key3) { return 3; }
+        if !window.is_open() || window.is_key_down(Key::Escape) { std::process::exit(0); }
+    }
+}
+fn render_sprites(
+    fb: &mut Framebuffer,
+    player: &Player,
+    maze: &Vec<Vec<char>>,
+    block_size: usize,
+    textures: &Textures,
+) {
+    let w = fb.width;
+    let h = fb.height;
+    let hh = h as f32 / 2.0;
+    
+    // Buscar todos los objetos en el laberinto
+    for (y, row) in maze.iter().enumerate() {
+        for (x, &cell) in row.iter().enumerate() {
+            // Solo procesar celdas que contienen objetos (1, 2, 3)
+            if cell != '1' && cell != '2' && cell != '3' {
+                continue;
+            }
+            
+            // Calcular posición del objeto en coordenadas del mundo
+            let obj_x = (x * block_size) as f32 + block_size as f32 / 2.0;
+            let obj_y = (y * block_size) as f32 + block_size as f32 / 2.0;
+            
+            // Calcular vector desde el jugador al objeto
+            let dx = obj_x - player.pos.x;
+            let dy = obj_y - player.pos.y;
+            
+            // Calcular distancia y ángulo del objeto
+            let dist = (dx * dx + dy * dy).sqrt();
+            let mut angle = dy.atan2(dx) - player.a;
+            
+            // Normalizar el ángulo
+            while angle > std::f32::consts::PI { angle -= 2.0 * std::f32::consts::PI; }
+            while angle < -std::f32::consts::PI { angle += 2.0 * std::f32::consts::PI; }
+            
+            // Solo renderizar objetos en el campo de visión
+            if angle.abs() < player.fov / 2.0 {
+                // Calcular la posición horizontal en la pantalla
+                let screen_x = (0.5 + angle / player.fov) * w as f32;
+                
+                // Calcular el tamaño del sprite en pantalla
+                let sprite_size = (block_size as f32 * hh / dist) as usize;
+                let half_size = sprite_size / 2;
+                
+                // Calcular coordenadas de pantalla
+                let screen_start_x = (screen_x as isize - half_size as isize).max(0) as usize;
+                let screen_end_x = (screen_x as isize + half_size as isize).min(w as isize - 1) as usize;
+                
+                let screen_start_y = (hh as isize - half_size as isize).max(0) as usize;
+                let screen_end_y = (hh as isize + half_size as isize).min(h as isize - 1) as usize;
+                
+                // Renderizar el sprite
+                for sy in screen_start_y..screen_end_y {
+                    for sx in screen_start_x..screen_end_x {
+                        // Calcular coordenadas UV en la textura
+                        let u = (sx as f32 - (screen_x - half_size as f32)) / sprite_size as f32;
+                        let v = (sy as f32 - (hh - half_size as f32)) / sprite_size as f32;
+                        
+                        // Obtener color de la textura
+                        let color = textures.sample(cell, u, v);
+                        
+                        // Solo dibujar si no es transparente (alpha > 0)
+                        if color != 0x000000 {
+                            fb.point(sx, sy, color);
+                        }
+                    }
+                }
+            }
         }
     }
 }

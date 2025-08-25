@@ -62,6 +62,7 @@ impl Player {
     pub fn get_collected_items(&self) -> u32 {
         self.collected_items
     }
+    
 }
 
 /// ¿El círculo del jugador colisiona con alguna pared?

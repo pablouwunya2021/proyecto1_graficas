@@ -2,7 +2,7 @@ use image::{DynamicImage, GenericImageView};
 use std::collections::HashMap;
 
 pub struct Textures {
-    pub map: HashMap<char, DynamicImage>, // asociamos char de pared -> imagen
+    pub map: HashMap<char, DynamicImage>,
 }
 
 impl Textures {
@@ -20,7 +20,7 @@ impl Textures {
         Textures { map }
     }
 
-    /// Obtener color de la textura en coordenada u,v (0..1)
+    /// Obtener color de la textura en coordenada u,v (0..1) para paredes
     pub fn sample(&self, c: char, u: f32, v: f32) -> u32 {
         if let Some(img) = self.map.get(&c) {
             let w = img.width() as f32;
@@ -30,6 +30,28 @@ impl Textures {
             let py = (v.clamp(0.0, 0.999) * h) as u32;
 
             let rgba = img.get_pixel(px, py).0;
+            ((rgba[0] as u32) << 16) | ((rgba[1] as u32) << 8) | (rgba[2] as u32)
+        } else {
+            0xFFFFFF
+        }
+    }
+
+    /// Obtener color de la textura para sprites (con soporte para transparencia)
+    pub fn sample_sprite(&self, c: char, u: f32, v: f32) -> u32 {
+        if let Some(img) = self.map.get(&c) {
+            let w = img.width() as f32;
+            let h = img.height() as f32;
+
+            let px = (u.clamp(0.0, 0.999) * w) as u32;
+            let py = (v.clamp(0.0, 0.999) * h) as u32;
+
+            let rgba = img.get_pixel(px, py).0;
+            
+            // Si el alpha es muy bajo o el color es negro puro, considerar transparente
+            if rgba[3] < 128 || (rgba[0] == 0 && rgba[1] == 0 && rgba[2] == 0) {
+                return 0x000000; // Color negro = transparente
+            }
+            
             ((rgba[0] as u32) << 16) | ((rgba[1] as u32) << 8) | (rgba[2] as u32)
         } else {
             0xFFFFFF
